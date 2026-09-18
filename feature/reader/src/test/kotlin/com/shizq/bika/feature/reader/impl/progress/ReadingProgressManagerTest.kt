@@ -7,7 +7,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Test
@@ -44,6 +44,7 @@ class ReadingProgressManagerTest {
         // 模拟第1章
         val chapter1Key = ChapterKey("comic-1", 1)
         dataSource.setAvailable(50)
+        val controller1 = FakeReaderController()
 
         // 启动第1章会话并恢复到起始页
         val job1 = backgroundScope.launch {
@@ -53,24 +54,23 @@ class ReadingProgressManagerTest {
                 totalPagesProvider = { 100 },
                 chapterTitleProvider = { "第1话" },
                 dataSource = dataSource,
-                controller = FakeReaderController(),
+                controller = controller1,
             )
         }
-        advanceUntilIdle()
+        runCurrent()
 
         // 验证恢复成功并开闸
         assertTrue(manager.restoreOutcome.value is RestoreOutcome.Confirmed)
 
         // 模拟用户翻到第20页
-        val progress20 = ChapterProgress("comic-1", 1, 20, 100, "第1话")
-        manager.writer.submit(progress20)
+        controller1.scrollTo(20)
         advanceTimeBy(500) // 防抖中
 
         // 切到第2章
         job1.cancel()
         val oldProgress = ChapterProgress("comic-1", 1, 20, 100, "第1话")
         manager.onChapterSwitch(oldProgress)
-        advanceUntilIdle()
+        runCurrent()
 
         // 验证第1章的进度被立即保存
         assertTrue(sink.writes.any { it.chapterOrder == 1 && it.pageIndex == 20 })
@@ -90,11 +90,12 @@ class ReadingProgressManagerTest {
                 controller = controller2,
             )
         }
-        advanceUntilIdle()
+        runCurrent()
 
         // 第2章恢复后可以写入
         controller2.scrollTo(15)
-        advanceUntilIdle()
+        advanceTimeBy(1000)
+        runCurrent()
 
         assertTrue(sink.writes.any { it.chapterOrder == 2 && it.pageIndex == 15 })
     }
@@ -120,7 +121,7 @@ class ReadingProgressManagerTest {
                 controller = controller,
             )
         }
-        advanceUntilIdle()
+        runCurrent()
 
         // 跟踪到第30页
         controller.scrollTo(30)
@@ -130,7 +131,7 @@ class ReadingProgressManagerTest {
 
         // 立即 flush：应写入第30页，而不是等防抖
         manager.flush()
-        advanceUntilIdle()
+        runCurrent()
 
         assertEquals(1, sink.writes.size)
         assertEquals(30, sink.writes.last().pageIndex)
@@ -205,13 +206,10 @@ class ReadingProgressManagerTest {
             availablePages = count
         }
 
-        override suspend fun awaitLoaded(pageIndex: Int): Boolean {
-            return pageIndex < availablePages
-        }
+        override fun isLoaded(index: Int): Boolean = index in 0 until availablePages
 
-        override fun isBeyondBounds(pageIndex: Int, totalPages: Int): Boolean {
-            return pageIndex >= totalPages
-        }
+        override suspend fun awaitLoadedOrBounds(index: Int): PageLoadResult =
+            if (isLoaded(index)) PageLoadResult.Loaded else PageLoadResult.OutOfBounds(availablePages)
     }
 
     private class FakeReaderController :
