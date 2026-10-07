@@ -43,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -246,26 +247,37 @@ private fun FeedContent(
     val isRefreshing = refreshState is FeedRefreshState.Loading
     val filterState = rememberFilterState(state.filterSelections)
 
-    var lastPage by remember { mutableStateOf<Int?>(null) }
-    var lastSort by remember { mutableStateOf<SortOrder?>(null) }
-    var lastFirstItemId by remember { mutableStateOf<String?>(null) }
+    var lastPage by rememberSaveable { mutableStateOf<Int?>(null) }
+    var lastSort by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastFirstItemId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // 只有非追加的成功页面加载（如切换页码、切换排序或筛选导致首项变动）才重置列表位置到顶部。
+    // 只有在非首次加载、内容真正发生切换（如翻页、切换排序或筛选导致首项变动）且不是追加加载时，才重置列表位置到顶部。
+    // 从详情页返回或初次渲染时绝不触发滚顶，以保证原浏览位置能够自然恢复。
     LaunchedEffect(displayedContentKey) {
         if (displayedContentKey != null) {
             val currentFirstItemId = content.page.items.firstOrNull()?.id
+            val currentSort = displayedContentKey.sort.name
+            val currentPage = displayedContentKey.page
+
+            val isFirstDisplay = lastPage == null
             val isContinuous = state.continuousScrollEnabled
             val isAppending = isContinuous &&
                     lastPage != null &&
-                    displayedContentKey.page > lastPage!! &&
-                    displayedContentKey.sort == lastSort &&
+                    currentPage > lastPage!! &&
+                    currentSort == lastSort &&
                     currentFirstItemId == lastFirstItemId
 
-            if (!isAppending) {
+            val isContentChanged = !isFirstDisplay && (
+                    currentPage != lastPage ||
+                    currentSort != lastSort ||
+                    currentFirstItemId != lastFirstItemId
+            )
+
+            if (isContentChanged && !isAppending) {
                 listState.scrollToItem(0)
             }
-            lastPage = displayedContentKey.page
-            lastSort = displayedContentKey.sort
+            lastPage = currentPage
+            lastSort = currentSort
             lastFirstItemId = currentFirstItemId
         }
     }
